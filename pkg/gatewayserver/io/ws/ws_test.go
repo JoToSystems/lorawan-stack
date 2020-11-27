@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"testing"
@@ -1032,6 +1033,21 @@ func TestTraffic(t *testing.T) {
 	}
 }
 
+type testTime struct {
+	Mux, Rx *time.Time
+}
+
+func (t *testTime) GetRefTime(waitTime time.Duration, drift time.Duration) float64 {
+	if t.Mux != nil {
+		time.Sleep(waitTime)
+		now := time.Now()
+		delta := now.Sub(*t.Rx)
+		reftime := t.Mux.Add(delta).Add(-drift)
+		return (float64(reftime.UnixNano()) / float64(time.Second))
+	}
+	return 0
+}
+
 func TestRTT(t *testing.T) {
 	a := assertions.New(t)
 	ctx := log.NewContext(test.Context(), test.GetLogger(t))
@@ -1083,13 +1099,20 @@ func TestRTT(t *testing.T) {
 		t.Fatal("Connection timeout")
 	}
 
-	var MuxTime, RxTime float64
+	getTimeFromFloat := func(floatVal float64) *time.Time {
+		sec, nsec := math.Modf(floatVal)
+		retTime := time.Unix(int64(sec), int64(nsec*1e9))
+		return &retTime
+	}
+
+	var testTime testTime
 	for _, tc := range []struct {
 		Name                   string
 		InputBSUpstream        interface{}
 		InputNetworkDownstream *ttnpb.DownlinkMessage
 		InputDownlinkPath      *ttnpb.DownlinkPath
 		WaitTime               time.Duration
+		ClockDrift             time.Duration
 		ExpectedRTTStatsCount  int
 	}{
 		{
@@ -1185,8 +1208,28 @@ func TestRTT(t *testing.T) {
 					},
 				},
 			},
-			ExpectedRTTStatsCount: 3,
+			ExpectedRTTStatsCount: 2,
 			WaitTime:              1 << 3 * test.Delay,
+		},
+		{
+			Name: "TxAckWithSmallClockDrift",
+			InputBSUpstream: lbslns.TxConfirmation{
+				Diid:  1,
+				XTime: 1548059982,
+			},
+			ExpectedRTTStatsCount: 3,
+			WaitTime:              1 << 4 * test.Delay,
+			ClockDrift:            1 * time.Second,
+		},
+		{
+			Name: "TxAckWithClockDriftAboveThreshold",
+			InputBSUpstream: lbslns.TxConfirmation{
+				Diid:  1,
+				XTime: 1548059982,
+			},
+			ExpectedRTTStatsCount: 3,
+			WaitTime:              1 << 4 * test.Delay,
+			ClockDrift:            31 * time.Second,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -1194,11 +1237,7 @@ func TestRTT(t *testing.T) {
 			if tc.InputBSUpstream != nil {
 				switch v := tc.InputBSUpstream.(type) {
 				case lbslns.TxConfirmation:
-					if MuxTime != 0 {
-						time.Sleep(tc.WaitTime)
-						now := float64(time.Now().UnixNano()) / float64(time.Second)
-						v.RefTime = now - RxTime + MuxTime
-					}
+					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1216,11 +1255,7 @@ func TestRTT(t *testing.T) {
 					}
 
 				case lbslns.UplinkDataFrame:
-					if MuxTime != 0 {
-						time.Sleep(tc.WaitTime)
-						now := float64(time.Now().UnixNano()) / float64(time.Second)
-						v.RefTime = now - RxTime + MuxTime
-					}
+					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1240,11 +1275,7 @@ func TestRTT(t *testing.T) {
 					}
 
 				case lbslns.JoinRequest:
-					if MuxTime != 0 {
-						time.Sleep(tc.WaitTime)
-						now := float64(time.Now().Unix()) + float64(time.Now().Nanosecond())/(1e9)
-						v.RefTime = now - RxTime + MuxTime
-					}
+					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1264,7 +1295,7 @@ func TestRTT(t *testing.T) {
 					}
 				}
 
-				if MuxTime > 0 {
+				if testTime.Mux != nil {
 					// Atleast one downlink is needed for the first muxtime.
 					min, max, median, _, count := gsConn.RTTStats(90, time.Now())
 					if !a.So(count, should.Equal, tc.ExpectedRTTStatsCount) {
@@ -1303,8 +1334,10 @@ func TestRTT(t *testing.T) {
 					if err := json.Unmarshal(res, &msg); err != nil {
 						t.Fatalf("Failed to unmarshal response `%s`: %v", string(res), err)
 					}
-					MuxTime = msg.MuxTime
-					RxTime = float64(time.Now().Unix()) + float64(time.Now().Nanosecond())/(1e9)
+					testTime.Mux = getTimeFromFloat(msg.MuxTime)
+					// Add 2 seconds for a realistic transmission delay
+					rx := testTime.Mux.Add(2 * time.Second)
+					testTime.Rx = &rx
 				case <-time.After(timeout):
 					t.Fatalf("Read message timeout")
 				}

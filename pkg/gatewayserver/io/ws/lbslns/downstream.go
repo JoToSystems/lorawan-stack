@@ -72,18 +72,26 @@ func (f *lbsLNS) FromDownlink(ctx context.Context, uid string, down ttnpb.Downli
 	dnmsg.Priority = 25
 	dnmsg.RxDelay = 1
 
+	muxTime := float64(dlTime.UnixNano()) / float64(time.Second)
+
 	// The first 16 bits of XTime gets the session ID from the upstream latestXTime and the other 48 bits are concentrator timestamp accounted for rollover.
 	var (
-		state State
-		ok    bool
+		old State
+		ok  bool
 	)
 	session := ws.SessionFromContext(ctx)
 	session.DataMu.Lock()
 	defer session.DataMu.Unlock()
-	if state, ok = session.Data.(State); !ok {
+	if old, ok = session.Data.(State); !ok {
 		return nil, errSessionStateNotFound
 	}
-	xTime := int64(state.ID)<<48 | (int64(concentratorTime) / int64(time.Microsecond) & 0xFFFFFFFFFF)
+	xTime := int64(old.ID)<<48 | (int64(concentratorTime) / int64(time.Microsecond) & 0xFFFFFFFFFF)
+
+	// Store the Downlink MuxTime back into the state.
+	session.Data = State{
+		ID:      old.ID,
+		MuxTime: muxTime,
+	}
 
 	// Estimate the xtime based on the timestamp; xtime = timestamp - (rxdelay). The calculated offset is in microseconds.
 	dnmsg.XTime = xTime - int64(dnmsg.RxDelay*int(time.Second/time.Microsecond))
@@ -96,7 +104,7 @@ func (f *lbsLNS) FromDownlink(ctx context.Context, uid string, down ttnpb.Downli
 	dnmsg.Rx1Freq = int(settings.Frequency)
 
 	// Add the MuxTime for RTT measurement
-	dnmsg.MuxTime = float64(dlTime.UnixNano()) / float64(time.Second)
+	dnmsg.MuxTime = muxTime
 
 	// The GS controls the scheduling and hence for the gateway, its always Class A.
 	dnmsg.DeviceClass = uint(ttnpb.CLASS_A)

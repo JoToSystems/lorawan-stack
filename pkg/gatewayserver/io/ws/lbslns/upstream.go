@@ -38,6 +38,9 @@ var (
 	errJoinRequestMessage = errors.Define("join_request_message", "invalid join-request message received")
 	errUplinkDataFrame    = errors.Define("uplink_data_Frame", "invalid uplink data frame received")
 	errUplinkMessage      = errors.Define("uplink_message", "invalid uplink message received")
+
+	// MaxValidRoundTripDelay indicates the maximum valid value for a roundtrip to the gateway.
+	MaxValidRoundTripDelay = 30 * time.Second
 )
 
 // UpInfo provides additional metadata on each upstream message.
@@ -432,6 +435,7 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 	))
 
 	recordTime := func(refTime float64, xTime int64, server time.Time) {
+		// Set refTime to 0 to skip recording RTT
 		sec, nsec := math.Modf(refTime)
 		if sec != 0 {
 			ref := time.Unix(int64(sec), int64(nsec*1e9))
@@ -444,6 +448,12 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 			// The Basic Station epoch is the 48 LSB.
 			scheduling.ConcentratorTime(time.Duration(xTime&0xFFFFFFFFFF)*time.Microsecond),
 		)
+	}
+
+	getTimeFromFloat := func(floatVal float64) *time.Time {
+		sec, nsec := math.Modf(floatVal)
+		retTime := time.Unix(int64(sec), int64(nsec*1e9))
+		return &retTime
 	}
 
 	switch typ {
@@ -481,11 +491,15 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		}
 		session := ws.SessionFromContext(ctx)
 		session.DataMu.Lock()
-		session.Data = State{
+		new := State{
 			ID: int32(jreq.UpInfo.XTime >> 48),
 		}
+		if old, ok := session.Data.(State); ok {
+			new.MuxTime = old.MuxTime
+		}
+		session.Data = new
 		session.DataMu.Unlock()
-		recordTime(jreq.RefTime, jreq.UpInfo.XTime, receivedAt)
+		recordTime(0, jreq.UpInfo.XTime, receivedAt)
 
 	case TypeUpstreamUplinkDataFrame:
 		var updf UplinkDataFrame
@@ -508,11 +522,15 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		}
 		session := ws.SessionFromContext(ctx)
 		session.DataMu.Lock()
-		session.Data = State{
+		new := State{
 			ID: int32(updf.UpInfo.XTime >> 48),
 		}
+		if old, ok := session.Data.(State); ok {
+			new.MuxTime = old.MuxTime
+		}
+		session.Data = new
 		session.DataMu.Unlock()
-		recordTime(updf.RefTime, updf.UpInfo.XTime, receivedAt)
+		recordTime(0, updf.UpInfo.XTime, receivedAt)
 
 	case TypeUpstreamTxConfirmation:
 		var txConf TxConfirmation
@@ -528,12 +546,32 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 			return nil, err
 		}
 		session := ws.SessionFromContext(ctx)
+		var latestMuxTime float64
+
 		session.DataMu.Lock()
-		session.Data = State{
+		defer session.DataMu.Unlock()
+		new := State{
 			ID: int32(txConf.XTime >> 48),
 		}
-		session.DataMu.Unlock()
-		recordTime(txConf.RefTime, txConf.XTime, receivedAt)
+		if old, ok := session.Data.(State); ok {
+			latestMuxTime = old.MuxTime
+			new.MuxTime = old.MuxTime
+		} else {
+			logger.Warn("No session data found. Skip RTT measurement")
+			recordTime(0, txConf.XTime, receivedAt)
+			break
+		}
+		session.Data = new
+
+		mux := getTimeFromFloat(latestMuxTime)
+		ref := getTimeFromFloat(txConf.RefTime)
+
+		delta := mux.Sub(*ref)
+		if delta > MaxValidRoundTripDelay {
+			logger.WithField("delta", delta).Warn("Gateway reported reftime greater than the valid maximum. Skip RTT measurement")
+		} else {
+			recordTime(txConf.RefTime, txConf.XTime, receivedAt)
+		}
 
 	case TypeUpstreamProprietaryDataFrame, TypeUpstreamRemoteShell, TypeUpstreamTimeSync:
 		logger.WithField("message_type", typ).Debug("Message type not implemented")

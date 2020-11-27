@@ -29,7 +29,8 @@ var (
 
 // State represents the LBS Session state.
 type State struct {
-	ID int32
+	ID      int32
+	MuxTime float64
 }
 
 type lbsLNS struct {
