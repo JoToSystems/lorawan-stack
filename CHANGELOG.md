@@ -19,6 +19,8 @@ For details about compatibility between different releases, see the **Commitment
 
 ### Fixed
 
+- RTT recording for LBS gateways.
+
 ### Security
 
 ## [3.10.3] - 2020-12-02
