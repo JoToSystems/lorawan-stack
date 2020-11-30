@@ -270,8 +270,9 @@ func New(c *component.Component, conf *Config, opts ...Option) (gs *GatewayServe
 		listenerConfig listenerConfig
 	}{
 		{
-			Name:      "basicstation",
-			Formatter: lbslns.NewFormatter(),
+			Name: "basicstation",
+			// TODO: Add to config in v3.11 (https://github.com/TheThingsNetwork/lorawan-stack/issues/3548)
+			Formatter: lbslns.NewFormatter(10 * time.Second),
 			listenerConfig: listenerConfig{
 				fallbackFreqPlanID: conf.BasicStation.FallbackFrequencyPlanID,
 				listen:             conf.BasicStation.Listen,

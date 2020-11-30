@@ -65,6 +65,8 @@ var (
 		AllowUnauthenticated: true,
 		UseTrafficTLSAddress: false,
 	}
+
+	maxRoundTripDelay = 10 * time.Second
 )
 
 func eui64Ptr(eui types.EUI64) *types.EUI64 { return &eui }
@@ -109,7 +111,7 @@ func TestClientTokenAuth(t *testing.T) {
 	} {
 		cfg := defaultConfig
 		cfg.AllowUnauthenticated = ttc.AllowUnauthenticated
-		bsWebServer := New(ctx, gs, lbslns.NewFormatter(), cfg)
+		bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), cfg)
 		lis, err := net.Listen("tcp", serverAddress)
 		if !a.So(err, should.BeNil) {
 			t.FailNow()
@@ -224,7 +226,7 @@ func TestDiscover(t *testing.T) {
 	mustHavePeer(ctx, c, ttnpb.ClusterRole_ENTITY_REGISTRY)
 	gs := mock.NewServer(c)
 
-	bsWebServer := New(ctx, gs, lbslns.NewFormatter(), defaultConfig)
+	bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), defaultConfig)
 	lis, err := net.Listen("tcp", serverAddress)
 	if !a.So(err, should.BeNil) {
 		t.FailNow()
@@ -461,7 +463,7 @@ func TestVersion(t *testing.T) {
 	mustHavePeer(ctx, c, ttnpb.ClusterRole_ENTITY_REGISTRY)
 	gs := mock.NewServer(c)
 
-	bsWebServer := New(ctx, gs, lbslns.NewFormatter(), defaultConfig)
+	bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), defaultConfig)
 	lis, err := net.Listen("tcp", serverAddress)
 	if !a.So(err, should.BeNil) {
 		t.FailNow()
@@ -723,7 +725,7 @@ func TestTraffic(t *testing.T) {
 	mustHavePeer(ctx, c, ttnpb.ClusterRole_ENTITY_REGISTRY)
 	gs := mock.NewServer(c)
 
-	bsWebServer := New(ctx, gs, lbslns.NewFormatter(), defaultConfig)
+	bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), defaultConfig)
 	lis, err := net.Listen("tcp", serverAddress)
 	if !a.So(err, should.BeNil) {
 		t.FailNow()
@@ -1073,7 +1075,7 @@ func TestRTT(t *testing.T) {
 	mustHavePeer(ctx, c, ttnpb.ClusterRole_ENTITY_REGISTRY)
 	gs := mock.NewServer(c)
 
-	bsWebServer := New(ctx, gs, lbslns.NewFormatter(), defaultConfig)
+	bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), defaultConfig)
 	lis, err := net.Listen("tcp", serverAddress)
 	if !a.So(err, should.BeNil) {
 		t.FailNow()
@@ -1229,7 +1231,7 @@ func TestRTT(t *testing.T) {
 			},
 			ExpectedRTTStatsCount: 3,
 			WaitTime:              1 << 4 * test.Delay,
-			ClockDrift:            31 * time.Second,
+			ClockDrift:            11 * time.Second,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -1371,7 +1373,7 @@ func TestPingPong(t *testing.T) {
 	mustHavePeer(ctx, c, ttnpb.ClusterRole_ENTITY_REGISTRY)
 	gs := mock.NewServer(c)
 
-	bsWebServer := New(ctx, gs, lbslns.NewFormatter(), defaultConfig)
+	bsWebServer := New(ctx, gs, lbslns.NewFormatter(maxRoundTripDelay), defaultConfig)
 	lis, err := net.Listen("tcp", serverAddress)
 	if !a.So(err, should.BeNil) {
 		t.FailNow()

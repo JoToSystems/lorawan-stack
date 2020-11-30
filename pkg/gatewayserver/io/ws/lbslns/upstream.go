@@ -38,9 +38,6 @@ var (
 	errJoinRequestMessage = errors.Define("join_request_message", "invalid join-request message received")
 	errUplinkDataFrame    = errors.Define("uplink_data_Frame", "invalid uplink data frame received")
 	errUplinkMessage      = errors.Define("uplink_message", "invalid uplink message received")
-
-	// MaxValidRoundTripDelay indicates the maximum valid value for a roundtrip to the gateway.
-	MaxValidRoundTripDelay = 30 * time.Second
 )
 
 // UpInfo provides additional metadata on each upstream message.
@@ -450,7 +447,7 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		)
 	}
 
-	getTimeFromFloat := func(floatVal float64) *time.Time {
+	getTimeFromFloat64 := func(floatVal float64) *time.Time {
 		sec, nsec := math.Modf(floatVal)
 		retTime := time.Unix(int64(sec), int64(nsec*1e9))
 		return &retTime
@@ -563,11 +560,11 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		}
 		session.Data = new
 
-		mux := getTimeFromFloat(latestMuxTime)
-		ref := getTimeFromFloat(txConf.RefTime)
+		mux := getTimeFromFloat64(latestMuxTime)
+		ref := getTimeFromFloat64(txConf.RefTime)
 
 		delta := mux.Sub(*ref)
-		if delta > MaxValidRoundTripDelay {
+		if delta > f.maxRoundTripDelay {
 			logger.WithField("delta", delta).Warn("Gateway reported reftime greater than the valid maximum. Skip RTT measurement")
 		} else {
 			recordTime(txConf.RefTime, txConf.XTime, receivedAt)
