@@ -66,7 +66,7 @@ var (
 		UseTrafficTLSAddress: false,
 	}
 
-	maxRoundTripDelay = 10 * time.Second
+	maxRoundTripDelay = (1 << 4) * test.Delay
 )
 
 func eui64Ptr(eui types.EUI64) *types.EUI64 { return &eui }
@@ -948,7 +948,7 @@ func TestTraffic(t *testing.T) {
 				Diid:  2,
 				XTime: 1548059982,
 			},
-			ExpectedNetworkUpstream: ttnpb.TxAcknowledgment{},
+			ExpectedNetworkUpstream: nil,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -1035,21 +1035,6 @@ func TestTraffic(t *testing.T) {
 	}
 }
 
-type testTime struct {
-	Mux, Rx *time.Time
-}
-
-func (t *testTime) GetRefTime(waitTime time.Duration, drift time.Duration) float64 {
-	if t.Mux != nil {
-		time.Sleep(waitTime)
-		now := time.Now()
-		delta := now.Sub(*t.Rx)
-		reftime := t.Mux.Add(delta).Add(-drift)
-		return (float64(reftime.UnixNano()) / float64(time.Second))
-	}
-	return 0
-}
-
 func TestRTT(t *testing.T) {
 	a := assertions.New(t)
 	ctx := log.NewContext(test.Context(), test.GetLogger(t))
@@ -1107,7 +1092,7 @@ func TestRTT(t *testing.T) {
 		return &retTime
 	}
 
-	var testTime testTime
+	var MuxTime *time.Time
 	for _, tc := range []struct {
 		Name                   string
 		InputBSUpstream        interface{}
@@ -1221,7 +1206,7 @@ func TestRTT(t *testing.T) {
 			},
 			ExpectedRTTStatsCount: 3,
 			WaitTime:              1 << 4 * test.Delay,
-			ClockDrift:            1 * time.Second,
+			ClockDrift:            1 << 3 * test.Delay,
 		},
 		{
 			Name: "TxAckWithClockDriftAboveThreshold",
@@ -1231,7 +1216,7 @@ func TestRTT(t *testing.T) {
 			},
 			ExpectedRTTStatsCount: 3,
 			WaitTime:              1 << 4 * test.Delay,
-			ClockDrift:            11 * time.Second,
+			ClockDrift:            1 << 4 * test.Delay,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -1239,7 +1224,8 @@ func TestRTT(t *testing.T) {
 			if tc.InputBSUpstream != nil {
 				switch v := tc.InputBSUpstream.(type) {
 				case lbslns.TxConfirmation:
-					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
+					time.Sleep(tc.ClockDrift)
+					v.RefTime = float64(time.Now().UnixNano()) / float64(time.Second)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1257,7 +1243,8 @@ func TestRTT(t *testing.T) {
 					}
 
 				case lbslns.UplinkDataFrame:
-					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
+					time.Sleep(tc.ClockDrift)
+					v.RefTime = float64(time.Now().UnixNano()) / float64(time.Second)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1277,7 +1264,8 @@ func TestRTT(t *testing.T) {
 					}
 
 				case lbslns.JoinRequest:
-					v.RefTime = testTime.GetRefTime(tc.WaitTime, tc.ClockDrift)
+					time.Sleep(tc.ClockDrift)
+					v.RefTime = float64(time.Now().UnixNano()) / float64(time.Second)
 					req, err := json.Marshal(v)
 					if err != nil {
 						panic(err)
@@ -1297,7 +1285,7 @@ func TestRTT(t *testing.T) {
 					}
 				}
 
-				if testTime.Mux != nil {
+				if MuxTime != nil {
 					// Atleast one downlink is needed for the first muxtime.
 					min, max, median, _, count := gsConn.RTTStats(90, time.Now())
 					if !a.So(count, should.Equal, tc.ExpectedRTTStatsCount) {
@@ -1336,10 +1324,7 @@ func TestRTT(t *testing.T) {
 					if err := json.Unmarshal(res, &msg); err != nil {
 						t.Fatalf("Failed to unmarshal response `%s`: %v", string(res), err)
 					}
-					testTime.Mux = getTimeFromFloat(msg.MuxTime)
-					// Add 2 seconds for a realistic transmission delay
-					rx := testTime.Mux.Add(2 * time.Second)
-					testTime.Rx = &rx
+					MuxTime = getTimeFromFloat(msg.MuxTime)
 				case <-time.After(timeout):
 					t.Fatalf("Read message timeout")
 				}

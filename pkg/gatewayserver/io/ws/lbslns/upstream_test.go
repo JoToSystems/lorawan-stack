@@ -644,19 +644,55 @@ func TestJreqFromUplinkDataFrame(t *testing.T) {
 
 func TestTxAck(t *testing.T) {
 	a := assertions.New(t)
-	txConf := TxConfirmation{
-		Diid:    1,
-		RefTime: 0,
-	}
 	correlationIDs := []string{"i3N84kvunPAS8wOmiEKbhsP62wNMRdmn", "deK3h59wUZhR0xb17eumTkauGQxoB5xn"}
-	var lnsLNS lbsLNS
-	now := time.Now()
-	lnsLNS.tokens.Next(correlationIDs, time.Unix(int64(0), 0))
-	txAck := txConf.ToTxAck(context.Background(), lnsLNS.tokens, now)
-	if !a.So(txAck, should.Resemble, &ttnpb.TxAcknowledgment{
-		CorrelationIDs: correlationIDs,
-		Result:         ttnpb.TxAcknowledgment_SUCCESS,
-	}) {
-		t.Fatalf("Unexpected TxAck: %v", txAck)
+	lnsLNS := lbsLNS{
+		maxRoundTripDelay: 10 * time.Second,
+	}
+	downlinkTime := time.Now()
+
+	jitter := 1 * time.Microsecond
+
+	for _, tc := range []struct {
+		Name    string
+		RefTime time.Time
+		Delta   time.Duration
+	}{
+		{
+			Name:    "NormalTxAck",
+			RefTime: downlinkTime.Add(1 * time.Second),
+			Delta:   1 * time.Second,
+		},
+		{
+			Name:    "TxAckWithAcceptableDelay",
+			RefTime: downlinkTime.Add(5 * time.Second),
+			Delta:   5 * time.Second,
+		},
+		{
+			Name:    "TxAckWithDelayBelowLimit",
+			RefTime: downlinkTime.Add(9 * time.Second),
+			Delta:   9 * time.Second,
+		},
+		{
+			Name:    "TxAckWithDelayAboveLimit",
+			RefTime: downlinkTime.Add(11 * time.Second),
+			Delta:   11 * time.Second,
+		},
+	} {
+		t.Run(tc.Name, func(t *testing.T) {
+			txConf := TxConfirmation{
+				Diid:    int64(lnsLNS.tokens.Next(correlationIDs, downlinkTime)),
+				RefTime: float64(tc.RefTime.UnixNano()) / float64(time.Second),
+			}
+			txAck, delta := txConf.ToTxAck(context.Background(), lnsLNS.tokens)
+			if !a.So(txAck, should.Resemble, &ttnpb.TxAcknowledgment{
+				CorrelationIDs: correlationIDs,
+				Result:         ttnpb.TxAcknowledgment_SUCCESS,
+			}) {
+				t.Fatalf("Unexpected TxAck: %v", txAck)
+			}
+			if !a.So(delta, should.BeBetweenOrEqual, tc.Delta-jitter, tc.Delta+jitter) {
+				t.Fatalf("Unexpected delta: %v", delta)
+			}
+		})
 	}
 }

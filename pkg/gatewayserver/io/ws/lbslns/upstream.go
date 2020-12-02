@@ -407,16 +407,25 @@ func (updf *UplinkDataFrame) FromUplinkMessage(up *ttnpb.UplinkMessage, bandID s
 }
 
 // ToTxAck converts the LoRa Basics Station TxConfirmation message to ttnpb.TxAcknowledgment
-func (conf TxConfirmation) ToTxAck(ctx context.Context, tokens io.DownlinkTokens, receivedAt time.Time) *ttnpb.TxAcknowledgment {
-	var txAck ttnpb.TxAcknowledgment
-	if cids, _, ok := tokens.Get(uint16(conf.Diid), receivedAt); ok {
-		txAck.CorrelationIDs = cids
-		txAck.Result = ttnpb.TxAcknowledgment_SUCCESS
+func (conf TxConfirmation) ToTxAck(ctx context.Context, tokens io.DownlinkTokens) (*ttnpb.TxAcknowledgment, time.Duration) {
+	logger := log.FromContext(ctx)
+	sec, nsec := math.Modf(conf.RefTime)
+	refTime := time.Unix(int64(sec), int64(nsec*1e9))
+	var (
+		cids  []string
+		ok    bool
+		txAck *ttnpb.TxAcknowledgment
+		delta time.Duration
+	)
+	if cids, delta, ok = tokens.Get(uint16(conf.Diid), refTime); ok {
+		txAck = &ttnpb.TxAcknowledgment{
+			CorrelationIDs: cids,
+			Result:         ttnpb.TxAcknowledgment_SUCCESS,
+		}
 	} else {
-		logger := log.FromContext(ctx)
 		logger.WithField("diid", conf.Diid).Debug("Tx acknowledgement either does not correspond to a downlink message or arrived too late")
 	}
-	return &txAck
+	return txAck, delta
 }
 
 // HandleUp implements Formatter.
@@ -445,12 +454,6 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 			// The Basic Station epoch is the 48 LSB.
 			scheduling.ConcentratorTime(time.Duration(xTime&0xFFFFFFFFFF)*time.Microsecond),
 		)
-	}
-
-	getTimeFromFloat64 := func(floatVal float64) *time.Time {
-		sec, nsec := math.Modf(floatVal)
-		retTime := time.Unix(int64(sec), int64(nsec*1e9))
-		return &retTime
 	}
 
 	switch typ {
@@ -488,13 +491,9 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		}
 		session := ws.SessionFromContext(ctx)
 		session.DataMu.Lock()
-		new := State{
+		session.Data = State{
 			ID: int32(jreq.UpInfo.XTime >> 48),
 		}
-		if old, ok := session.Data.(State); ok {
-			new.MuxTime = old.MuxTime
-		}
-		session.Data = new
 		session.DataMu.Unlock()
 		recordTime(0, jreq.UpInfo.XTime, receivedAt)
 
@@ -519,13 +518,9 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		}
 		session := ws.SessionFromContext(ctx)
 		session.DataMu.Lock()
-		new := State{
+		session.Data = State{
 			ID: int32(updf.UpInfo.XTime >> 48),
 		}
-		if old, ok := session.Data.(State); ok {
-			new.MuxTime = old.MuxTime
-		}
-		session.Data = new
 		session.DataMu.Unlock()
 		recordTime(0, updf.UpInfo.XTime, receivedAt)
 
@@ -534,7 +529,7 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 		if err := json.Unmarshal(raw, &txConf); err != nil {
 			return nil, err
 		}
-		txAck := txConf.ToTxAck(ctx, f.tokens, receivedAt)
+		txAck, delta := txConf.ToTxAck(ctx, f.tokens)
 		if txAck == nil {
 			break
 		}
@@ -542,30 +537,17 @@ func (f *lbsLNS) HandleUp(ctx context.Context, raw []byte, ids ttnpb.GatewayIden
 			logger.WithError(err).Warn("Failed to handle tx ack message")
 			return nil, err
 		}
-		session := ws.SessionFromContext(ctx)
-		var latestMuxTime float64
 
+		session := ws.SessionFromContext(ctx)
 		session.DataMu.Lock()
-		defer session.DataMu.Unlock()
-		new := State{
+		session.Data = State{
 			ID: int32(txConf.XTime >> 48),
 		}
-		if old, ok := session.Data.(State); ok {
-			latestMuxTime = old.MuxTime
-			new.MuxTime = old.MuxTime
-		} else {
-			logger.Warn("No session data found. Skip RTT measurement")
-			recordTime(0, txConf.XTime, receivedAt)
-			break
-		}
-		session.Data = new
+		session.DataMu.Unlock()
 
-		mux := getTimeFromFloat64(latestMuxTime)
-		ref := getTimeFromFloat64(txConf.RefTime)
-
-		delta := mux.Sub(*ref)
 		if delta > f.maxRoundTripDelay {
 			logger.WithField("delta", delta).Warn("Gateway reported reftime greater than the valid maximum. Skip RTT measurement")
+			recordTime(0, txConf.XTime, receivedAt)
 		} else {
 			recordTime(txConf.RefTime, txConf.XTime, receivedAt)
 		}
