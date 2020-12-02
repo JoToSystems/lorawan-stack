@@ -52,8 +52,9 @@ var DefaultGatewayServerConfig = gatewayserver.Config{
 	},
 	UpdateConnectionStatsDebounceTime: 3 * time.Second,
 	BasicStation: gatewayserver.BasicStationConfig{
-		Config:    ws.DefaultConfig,
-		Listen:    ":1887",
-		ListenTLS: ":8887",
+		MaxValidRoundTripDelay: 10 * time.Second,
+		Config:                 ws.DefaultConfig,
+		Listen:                 ":1887",
+		ListenTLS:              ":8887",
 	},
 }
