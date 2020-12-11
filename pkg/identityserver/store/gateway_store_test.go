@@ -49,30 +49,21 @@ func TestGatewayStore(t *testing.T) {
 
 		from := time.Now()
 		to := from.Add(5 * time.Minute)
-
 		gtwClaimAuthCode := ttnpb.GatewayClaimAuthenticationCode{
 			ValidFrom: &from,
 			ValidTo:   &to,
-			Value:     []byte("my claim auth code"),
+			Secret: &ttnpb.Secret{
+				KeyID: "my-secret-key-id",
+				Value: []byte("my very secret value"),
+			},
 		}
-		gtwClaimAuthCodeBytes, err := gtwClaimAuthCode.Marshal()
-		a.So(err, should.BeNil)
-		claimAuthCode := &ttnpb.Secret{
-			KeyID: "my-secret-key-id",
-			Value: gtwClaimAuthCodeBytes,
-		}
-
 		otherGtwClaimAuthCode := ttnpb.GatewayClaimAuthenticationCode{
 			ValidFrom: &from,
 			ValidTo:   &to,
-			Value:     []byte("my other claim auth code"),
-		}
-		otherGtwClaimAuthCodeBytes, err := otherGtwClaimAuthCode.Marshal()
-		a.So(err, should.BeNil)
-
-		otherClaimAuthCode := &ttnpb.Secret{
-			KeyID: "my-secret-key-id",
-			Value: otherGtwClaimAuthCodeBytes,
+			Secret: &ttnpb.Secret{
+				KeyID: "my-secret-key-id",
+				Value: []byte("my other very secret value"),
+			},
 		}
 
 		created, err := store.CreateGateway(ctx, &ttnpb.Gateway{
@@ -93,7 +84,7 @@ func TestGatewayStore(t *testing.T) {
 			ScheduleAnytimeDelay:     &scheduleAnytimeDelay,
 			UpdateLocationFromStatus: true,
 			LBSLNSSecret:             secret,
-			ClaimAuthenticationCode:  claimAuthCode,
+			ClaimAuthenticationCode:  &gtwClaimAuthCode,
 		})
 
 		a.So(err, should.BeNil)
@@ -112,7 +103,7 @@ func TestGatewayStore(t *testing.T) {
 			a.So(created.LBSLNSSecret, should.NotBeNil)
 			a.So(created.LBSLNSSecret, should.Resemble, secret)
 			a.So(created.ClaimAuthenticationCode, should.NotBeNil)
-			a.So(created.ClaimAuthenticationCode, should.Resemble, claimAuthCode)
+			a.So(created.ClaimAuthenticationCode, should.Resemble, &gtwClaimAuthCode)
 		}
 
 		got, err := store.GetGateway(ctx, &ttnpb.GatewayIdentifiers{GatewayID: "foo"}, &pbtypes.FieldMask{Paths: []string{"name", "attributes", "lbs_lns_secret", "claim_authentication_code"}})
@@ -162,7 +153,7 @@ func TestGatewayStore(t *testing.T) {
 			ScheduleAnytimeDelay:     nil,
 			UpdateLocationFromStatus: false,
 			LBSLNSSecret:             otherSecret,
-			ClaimAuthenticationCode:  otherClaimAuthCode,
+			ClaimAuthenticationCode:  &otherGtwClaimAuthCode,
 		}, &pbtypes.FieldMask{Paths: []string{"description", "attributes", "antennas", "schedule_anytime_delay", "update_location_from_status", "lbs_lns_secret", "claim_authentication_code"}})
 
 		a.So(err, should.BeNil)
@@ -180,7 +171,7 @@ func TestGatewayStore(t *testing.T) {
 			a.So(*updated.ScheduleAnytimeDelay, should.Equal, time.Duration(0))
 			a.So(updated.UpdateLocationFromStatus, should.BeFalse)
 			a.So(updated.LBSLNSSecret, should.Resemble, otherSecret)
-			a.So(updated.ClaimAuthenticationCode, should.Resemble, otherClaimAuthCode)
+			a.So(updated.ClaimAuthenticationCode, should.Resemble, &otherGtwClaimAuthCode)
 		}
 
 		got, err = store.GetGateway(ctx, &ttnpb.GatewayIdentifiers{GatewayID: "foo"}, nil)
@@ -195,7 +186,7 @@ func TestGatewayStore(t *testing.T) {
 			a.So(got.CreatedAt, should.Equal, created.CreatedAt)
 			a.So(got.UpdatedAt, should.Equal, updated.UpdatedAt)
 			a.So(got.LBSLNSSecret, should.Resemble, otherSecret)
-			a.So(got.ClaimAuthenticationCode, should.Resemble, otherClaimAuthCode)
+			a.So(got.ClaimAuthenticationCode, should.Resemble, &otherGtwClaimAuthCode)
 		}
 
 		list, err := store.FindGateways(ctx, nil, &pbtypes.FieldMask{Paths: []string{"name"}})
